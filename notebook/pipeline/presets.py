@@ -51,6 +51,12 @@ class Preset:
     pitch_length_cm: int = 10500
     pitch_width_cm: int = 6800
 
+    # ---- 지표 ----
+    sprint_kmh: float = 20.0
+    """스프린트 판정 속도 [km/h]. 아마추어 경기면 낮춰 잡는 게 맞다."""
+    min_sprint_s: float = 0.8
+    """이보다 짧게 스치는 구간은 스프린트로 세지 않는다 (좌표 튐 방어)."""
+
     # ---- 히트맵 격자 ----
     grid_cols: int = 12         # 105/12 = 8.75m
     grid_rows: int = 8          # 68/8  = 8.5m  → 거의 정사각 바둑판
