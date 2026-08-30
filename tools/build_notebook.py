@@ -145,32 +145,37 @@ print(f"{VIDEO_PATH}  {_info.width}x{_info.height}  {_info.fps}fps  "
       f"{_info.total_frames/_info.fps:.0f}초")'''),
 
 (CODE, '''#@title 3-B. 내 영상 (3-A 대신 실행)
-# --- 아래 셋 중 하나만 주석 해제 ---
+# ── 셋 중 하나만 골라 주석을 풀 것 ──────────────────────────────
 
-## (1) 브라우저 업로드
+## (1) 유튜브 — Colab IP 가 차단되면 실패한다. 그때는 (2)/(3) 로.
+# !pip install -q -U yt-dlp
+# URL = "https://youtu.be/..."
+# !yt-dlp --extractor-args "youtube:player_client=android_vr" \\
+#         -f "bv*[height<=1080][ext=mp4]/b[height<=1080]" \\
+#         --retries 10 --fragment-retries 10 -o "match.mp4" "$URL"
+# VIDEO_PATH = "match.mp4"
+
+## (2) 브라우저 업로드 — 100MB 미만 권장
 # from google.colab import files
-# up = files.upload()
-# VIDEO_PATH = next(iter(up))
+# VIDEO_PATH = next(iter(files.upload()))
 
-## (2) Google Drive
+## (3) Google Drive — 큰 파일은 이쪽이 안정적이다
 # from google.colab import drive
 # drive.mount("/content/drive")
 # VIDEO_PATH = "/content/drive/MyDrive/football/match.mp4"
 
-## (3) 유튜브 (본인이 권리를 가진 영상만)
-# !pip install -q yt-dlp
-# URL = "https://www.youtube.com/watch?v=..."
-# !yt-dlp -f "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]" -o "match.mp4" "$URL"
-# VIDEO_PATH = "match.mp4"
-
-# --- 소스에 맞는 프리셋 ---
+# ── 소스에 맞는 프리셋 ──────────────────────────────────────────
 # PRESET = presets.get("broadcast")            # 프로 중계
 # PRESET = presets.get("handheld_elevated")    # 스마트폰 높은 위치 pitch view
-#     실측 규격을 알면 주입할 것 (기본 105x68m):
-#     PRESET = PRESET.with_(pitch_length_cm=10000, pitch_width_cm=6400)
+#   경기장 실측값을 알면 넣을 것 (기본 105x68m):
+#   PRESET = PRESET.with_(pitch_length_cm=10000, pitch_width_cm=6400)
 
-# START_S = 0.0
-# MAX_SECONDS = 600.0    # 처음엔 10분만 훑어볼 것
+# START_S     = 0.0
+# MAX_SECONDS = 600.0     # 처음엔 10분만 훑어볼 것. 전체는 None
+
+# import supervision as sv
+# _i = sv.VideoInfo.from_video_path(VIDEO_PATH)
+# print(f"{_i.width}x{_i.height} {_i.fps}fps {_i.total_frames/_i.fps/60:.1f}분")
 pass'''),
 
 (CODE, '''#@title 4. 모델 로드 (최초 1회 가중치 ~180MB 다운로드)
@@ -280,6 +285,65 @@ name = f"phase0_{PRESET.name}_{os.path.basename(VIDEO_PATH).rsplit('.',1)[0]}.js
 with open(name, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False)
 print(f"{name}  ({os.path.getsize(name)/1e6:.1f} MB)")
+
+try:
+    from google.colab import files
+    files.download(name)
+except Exception:
+    pass'''),
+
+(MD, """---
+
+# Phase 1 — 채택 구간 정밀 처리
+
+여기서부터는 **판정이 GO 인 경우에만** 진행한다.
+채택된 구간을 `analyze_fps`(기본 10fps)로 다시 훑어 실제 분석 결과를 만든다.
+
+| 하는 일 | |
+|---|---|
+| 프레임별 호모그래피 | 화면 → 경기장 미터 좌표 |
+| 선수 탐지 + ByteTrack | 트랙 ID 부여 |
+| 유니폼 색 팀 분류 | 두 팀 + 골키퍼 배정 |
+| 좌표 스무딩 | 이상치 제거, 카메라 떨림 억제 |
+| 지표 | 히트맵 · 궤적 · 속도 · 스프린트 · 팀 형태 시계열 |
+
+**시간이 걸린다.** 스캔(2fps)보다 5배 촘촘하고 구간마다 도는 만큼,
+채택 구간 총합 3분이면 T4 에서 5~10분쯤 잡으면 된다."""),
+
+(CODE, '''#@title 10. 구간 정밀 처리
+import time
+from pipeline import analyze, export
+
+MAX_WINDOWS = 5   #@param {type:"integer"}  처음엔 몇 개만. 전체는 0
+
+accepted = [w for w in WIN["window_index"] if w["status"] == "analyzed"]
+if MAX_WINDOWS > 0:
+    accepted = accepted[:MAX_WINDOWS]
+print(f"채택 구간 {len(accepted)}개 · analyze_fps={PRESET.analyze_fps}\\n")
+
+BUILT = []
+for w in accepted:
+    t0 = time.time()
+    res = analyze.analyze_window(VIDEO_PATH, w, MODELS, PRESET)
+    flipped = analyze.normalize_direction(res)
+    built = analyze.build_metrics(res, PRESET)
+    BUILT.append(export.build_window(res, built, PRESET))
+    q = res["team_quality"]
+    print(f"  {w[\'window_id\']}  {time.time()-t0:5.0f}s  "
+          f"트랙 {len(res[\'tracks\']):3d}개  "
+          f"팀균형 {q[\'balance\'] if q else \'-\'}  "
+          f"방향뒤집음={flipped}")
+
+BUNDLE = export.build_bundle(SCAN["video"], WIN["window_index"], BUILT, PRESET)
+print()
+export.summarize(BUNDLE)'''),
+
+(CODE, '''#@title 11. 번들 저장 + 다운로드
+import os
+
+name = f"analysis-{os.path.basename(VIDEO_PATH).rsplit(\'.\', 1)[0]}.json"
+export.save(BUNDLE, name)
+print(f"{name}  ({os.path.getsize(name)/1e6:.2f} MB)")
 
 try:
     from google.colab import files
