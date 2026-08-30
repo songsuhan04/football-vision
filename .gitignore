@@ -1,0 +1,39 @@
+# ---- 영상 (저작권 안전선 + 리포 비대 방지) ----
+web/public/videos/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+
+# ---- 분석 산출물 ----
+*.bundle.json
+analysis-bundle*.json
+notebook/out/
+notebook/models/
+notebook/data/
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+.vercel/
+
+# ---- 환경변수 (API 키) ----
+.env
+.env.*
+!.env.example
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# ---- OS / 에디터 ----
+.DS_Store
+.idea/
+*.swp
