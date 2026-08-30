@@ -31,7 +31,26 @@ CELLS = [
 (CODE, """#@title 1. 환경 설치 (2~3분)
 !pip install -q inference-gpu gdown
 !pip install -q git+https://github.com/roboflow/sports.git
-print("설치 완료")"""),
+
+# pip 이 조용히 실패하는 일이 있다. 실제로 import 되는지 여기서 확인한다.
+import importlib
+
+_missing = []
+for _m in ("inference", "supervision", "sports", "cv2", "numpy"):
+    try:
+        importlib.import_module(_m)
+        print("  OK  ", _m)
+    except ImportError as _e:
+        _missing.append(_m)
+        print("  FAIL", _m, "-", _e)
+
+print()
+if _missing:
+    print("설치 실패:", ", ".join(_missing))
+    print("→ 위 pip 출력에서 에러를 확인할 것")
+    print("→ 충돌 경고가 있었다면: 런타임 > 세션 다시 시작 후 이 셀부터 재실행")
+else:
+    print("설치 완료 - 2번 셀로 진행")"""),
 
 (CODE, '''#@title 2. 파이프라인 코드 가져오기
 import os, sys, shutil, subprocess, importlib
@@ -87,8 +106,14 @@ from pipeline import presets, geometry, models, scan, windows, report
 
 print("ROOT      :", os.path.abspath(ROOT))
 print("프리셋    :", list(presets.PRESETS))
-print()
-print("2번 셀 성공 — 4-A 로 진행할 것")'''),
+# 1번 셀을 건너뛰면 5번(모델 로드)에서야 터진다. 여기서 미리 잡는다.
+try:
+    models.check_env()
+    print()
+    print("2번 셀 성공 - 4-A 로 진행할 것")
+except ImportError as e:
+    print()
+    print("경고:", e)'''),
 
 (MD, """## 3. Roboflow API 키
 

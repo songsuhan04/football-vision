@@ -33,12 +33,42 @@ def load(api_key: str) -> Models:
             "Roboflow API 키가 비어 있다. "
             "https://app.roboflow.com/settings/api 에서 발급받아 전달할 것."
         )
-    from inference import get_model  # 무거운 임포트라 지연시킨다
+    try:
+        from inference import get_model  # 무거운 임포트라 지연시킨다
+    except ImportError as e:
+        raise ImportError(
+            "inference 패키지가 없다. 노트북 1번 셀(환경 설치)을 실행하지 않았거나 실패했다. "
+            "직접 설치하려면: !pip install -q inference-gpu "
+            "(설치 후 numpy 충돌 경고가 뜨면 런타임 → 세션 다시 시작 후 2번 셀부터 재실행)"
+        ) from e
 
     return Models(
         player=get_model(model_id=PLAYER_MODEL_ID, api_key=api_key),
         field=get_model(model_id=FIELD_MODEL_ID, api_key=api_key),
     )
+
+
+def check_env() -> None:
+    """필요한 패키지가 다 있는지 미리 확인한다.
+
+    모델 로드 단계에서야 터지면 원인을 찾기 어렵다. 앞단에서 한 번에 알려준다.
+    """
+    import importlib
+
+    missing = []
+    for mod, hint in (("inference", "inference-gpu"),
+                      ("supervision", "supervision"),
+                      ("sports", "git+https://github.com/roboflow/sports.git")):
+        try:
+            importlib.import_module(mod)
+        except ImportError:
+            missing.append((mod, hint))
+    if missing:
+        pkgs = " ".join(h for _, h in missing)
+        raise ImportError(
+            "누락된 패키지: " + ", ".join(m for m, _ in missing) +
+            f" — 노트북 1번 셀을 실행할 것. 직접 설치: !pip install -q {pkgs}"
+        )
 
 
 def pitch_config(preset):
