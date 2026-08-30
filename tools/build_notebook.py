@@ -34,46 +34,61 @@ CELLS = [
 print("설치 완료")"""),
 
 (CODE, '''#@title 2. 파이프라인 코드 가져오기
-import os, sys, subprocess
+import os, sys, shutil, subprocess, importlib
 
 REPO_URL = "https://github.com/songsuhan04/football-vision.git"
 REPO_DIR = "football-vision"
+MARKER = os.path.join("notebook", "pipeline", "presets.py")   # 리포가 온전한지 판별
+
 
 def _sh(*args):
     return subprocess.run(args, capture_output=True, text=True)
 
-if os.path.isdir("pipeline"):
-    ROOT = ".."                                   # 이미 리포 안에서 실행 중
-elif os.path.isdir(REPO_DIR):
-    _sh("git", "-C", REPO_DIR, "pull", "-q")      # 이미 받아둔 리포 갱신
-    ROOT = REPO_DIR
+
+def _intact(root: str) -> bool:
+    return os.path.isfile(os.path.join(root, MARKER))
+
+
+if _intact(".."):
+    ROOT = ".."                       # 이미 리포 안에서 실행 중
 else:
-    # private 리포라면 Colab 좌측 🔑 Secrets 에 GITHUB_TOKEN 을 넣어둘 것.
-    # (repo scope PAT. 리포를 public 으로 바꿨다면 토큰 없이도 된다)
-    token = ""
-    try:
-        from google.colab import userdata
-        token = userdata.get("GITHUB_TOKEN") or ""
-    except Exception:
-        pass
-    url = REPO_URL.replace("https://", f"https://{token}@") if token else REPO_URL
-    r = _sh("git", "clone", "-q", url, REPO_DIR)
-    if r.returncode:
-        raise SystemExit(
-            "clone 실패. private 리포라면 Colab Secrets 에 GITHUB_TOKEN(repo scope)을 추가하거나\\n"
-            "리포를 public 으로 전환할 것.\\n" + r.stderr[-500:])
+    # 이전에 clone 이 실패해 껍데기만 남았을 수 있다. 온전하지 않으면 지우고 새로 받는다.
+    if os.path.isdir(REPO_DIR) and not _intact(REPO_DIR):
+        shutil.rmtree(REPO_DIR, ignore_errors=True)
+
+    if os.path.isdir(REPO_DIR):
+        _sh("git", "-C", REPO_DIR, "pull", "-q")
+    else:
+        token = ""                    # public 리포면 불필요
+        try:
+            from google.colab import userdata
+            token = userdata.get("GITHUB_TOKEN") or ""
+        except Exception:
+            pass
+        url = REPO_URL.replace("https://", f"https://{token}@") if token else REPO_URL
+        r = _sh("git", "clone", "-q", url, REPO_DIR)
+        if r.returncode or not _intact(REPO_DIR):
+            shutil.rmtree(REPO_DIR, ignore_errors=True)
+            raise RuntimeError(
+                "리포를 받지 못했다. "
+                "public 인지 확인: https://github.com/songsuhan04/football-vision / "
+                "private 이면 Colab 좌측 열쇠 Secrets 에 GITHUB_TOKEN(repo scope) 추가. "
+                f"git: {r.stderr.strip()[-300:]}")
     ROOT = REPO_DIR
 
-sys.path.insert(0, os.path.join(ROOT, "notebook"))
+NOTEBOOK_DIR = os.path.abspath(os.path.join(ROOT, "notebook"))
+if NOTEBOOK_DIR not in sys.path:
+    sys.path.insert(0, NOTEBOOK_DIR)
 
-import importlib
 import pipeline
-for m in ("presets", "geometry", "models", "scan", "windows", "report"):
-    importlib.reload(importlib.import_module(f"pipeline.{m}"))
+for _m in ("presets", "geometry", "models", "scan", "windows", "report"):
+    importlib.reload(importlib.import_module(f"pipeline.{_m}"))
 from pipeline import presets, geometry, models, scan, windows, report
 
-print("ROOT:", os.path.abspath(ROOT))
-print("사용 가능한 프리셋:", list(presets.PRESETS))'''),
+print("ROOT      :", os.path.abspath(ROOT))
+print("프리셋    :", list(presets.PRESETS))
+print()
+print("2번 셀 성공 — 4-A 로 진행할 것")'''),
 
 (MD, """## 3. Roboflow API 키
 
