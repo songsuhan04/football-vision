@@ -29,12 +29,12 @@ def _keypoints_of(result) -> tuple:
     import supervision as sv
 
     try:
-        kp = sv.KeyPoints.from_inference(result)
+        kp = sv.KeyPoints.from_ultralytics(result)
     except Exception:
         return None, None
     if kp.xy is None or len(kp.xy) == 0:
         return None, None
-    conf = kp.confidence
+    conf = geometry.kp_confidence(kp)
     if conf is None or len(conf) == 0:
         return None, None
     return kp.xy[0], conf[0]
@@ -100,7 +100,7 @@ def scan(
         t = (start_frame + i * stride) / meta.fps
 
         # --- 경기장 키포인트 → 호모그래피 ---
-        kp_result = mdl.field.infer(frame, confidence=preset.det_conf)[0]
+        kp_result = mdl.field(frame, conf=preset.det_conf, verbose=False)[0]
         kp_xy, kp_conf = _keypoints_of(kp_result)
         H, n_kp, n_inliers = geometry.solve_homography(
             kp_xy, kp_conf, vertices_cm, preset.kp_conf, preset.min_keypoints
@@ -110,14 +110,16 @@ def scan(
             H = None
 
         # --- 선수 탐지 ---
-        det_result = mdl.player.infer(frame, confidence=preset.det_conf)[0]
-        det = sv.Detections.from_inference(det_result)
+        # imgsz 를 키워야 화면 먼 쪽의 작은 선수를 놓치지 않는다 (roboflow/sports 와 동일)
+        det_result = mdl.player(frame, conf=preset.det_conf,
+                                imgsz=preset.det_imgsz, verbose=False)[0]
+        det = sv.Detections.from_ultralytics(det_result)
         if len(det):
-            det = det[det.class_id != M.BALL_ID]
+            det = det[det.class_id != mdl.id_of("ball")]
         if len(det):
             det = det.with_nms(threshold=preset.nms_threshold, class_agnostic=True)
-        n_players = int((det.class_id == M.PLAYER_ID).sum()) if len(det) else 0
-        n_gk = int((det.class_id == M.GOALKEEPER_ID).sum()) if len(det) else 0
+        n_players = int((det.class_id == mdl.id_of("player")).sum()) if len(det) else 0
+        n_gk = int((det.class_id == mdl.id_of("goalkeeper")).sum()) if len(det) else 0
 
         # --- 카메라 움직임 ---
         speed = float("nan")

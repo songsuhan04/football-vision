@@ -16,6 +16,18 @@ SANITY_LIMIT_M = 300.0
 RANSAC_REPROJ_M = 3.0
 
 
+def kp_confidence(key_points):
+    """sv.KeyPoints 에서 키포인트 신뢰도 배열을 꺼낸다.
+
+    supervision 0.29 에서 `.confidence` 가 `.keypoint_confidence` 로 바뀌며 deprecated 됐다.
+    Colab 의 supervision 버전을 통제할 수 없으므로 양쪽을 다 받는다.
+    """
+    conf = getattr(key_points, "keypoint_confidence", None)
+    if conf is None:
+        conf = key_points.confidence
+    return conf
+
+
 def solve_homography(
     kp_xy: np.ndarray,
     kp_conf: np.ndarray,

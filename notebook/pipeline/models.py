@@ -1,51 +1,43 @@
-"""Roboflow 호스팅 모델 로딩 + 경기장 좌표계 구성.
+"""모델 가중치 로딩 + 경기장 좌표계 구성.
 
-가중치 .pt 파일은 공개 배포되지 않으므로 `inference` 패키지로 Roboflow에서 받아 쓴다.
-(Roboflow 무료 계정의 API 키 필요)
+Roboflow 의 `inference` 패키지는 Python <3.13 만 지원한다.
+Colab 이 3.13 으로 올라가면서 설치가 불가능해졌으므로,
+가중치(.pt)를 직접 받아 `ultralytics` 로 구동한다. Roboflow API 키도 필요 없다.
+
+가중치는 roboflow/sports 예제가 쓰는 것과 같은 파일명·같은 베이스(yolov8l / yolov8l-pose)의
+HuggingFace 미러에서 받는다. 구조는 로드 시점에 검증한다 (아래 _verify_*).
 """
 
-from dataclasses import dataclass
-from typing import Any
+import os
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Tuple
 
-# football-players-detection-3zvbc 의 클래스 ID
-BALL_ID = 0
-GOALKEEPER_ID = 1
-PLAYER_ID = 2
-REFEREE_ID = 3
+# (HF repo, 파일명)
+WEIGHTS: Dict[str, Tuple[str, str]] = {
+    "player": ("Sabkat/football-player-detection", "football-player-detection.pt"),
+    "field": ("Sabkat/football-pitch-detection", "football-pitch-detection.pt"),
+}
 
-CLASS_NAMES = {BALL_ID: "ball", GOALKEEPER_ID: "goalkeeper",
-               PLAYER_ID: "player", REFEREE_ID: "referee"}
+# 선수 탐지 모델이 내야 하는 클래스. ID 는 하드코딩하지 않고 이름으로 찾는다.
+EXPECTED_CLASSES = ("ball", "goalkeeper", "player", "referee")
 
-PLAYER_MODEL_ID = "football-players-detection-3zvbc/11"
-FIELD_MODEL_ID = "football-field-detection-f07vi/14"
+# 경기장 키포인트 개수. SoccerPitchConfiguration.vertices 와 일치해야 한다.
+EXPECTED_KEYPOINTS = 32
+
+DEFAULT_CACHE = "weights"
 
 
 @dataclass
 class Models:
-    player: Any   # 선수·GK·심판·공 탐지
-    field: Any    # 경기장 키포인트 32개
+    player: Any
+    field: Any
+    cls: Dict[str, int] = field(default_factory=dict)   # 이름 → 클래스 ID
+    n_keypoints: int = 0
+    device: str = "cpu"
 
-
-def load(api_key: str) -> Models:
-    """Roboflow 모델 두 개를 로드한다. 최초 호출 시 가중치를 내려받아 캐시한다."""
-    if not api_key:
-        raise ValueError(
-            "Roboflow API 키가 비어 있다. "
-            "https://app.roboflow.com/settings/api 에서 발급받아 전달할 것."
-        )
-    try:
-        from inference import get_model  # 무거운 임포트라 지연시킨다
-    except ImportError as e:
-        raise ImportError(
-            "inference 패키지가 없다. 노트북 1번 셀(환경 설치)을 실행하지 않았거나 실패했다. "
-            "직접 설치하려면: !pip install -q inference-gpu "
-            "(설치 후 numpy 충돌 경고가 뜨면 런타임 → 세션 다시 시작 후 2번 셀부터 재실행)"
-        ) from e
-
-    return Models(
-        player=get_model(model_id=PLAYER_MODEL_ID, api_key=api_key),
-        field=get_model(model_id=FIELD_MODEL_ID, api_key=api_key),
-    )
+    def id_of(self, name: str) -> int:
+        return self.cls[name]
 
 
 def check_env() -> None:
@@ -56,7 +48,7 @@ def check_env() -> None:
     import importlib
 
     missing = []
-    for mod, hint in (("inference", "inference-gpu"),
+    for mod, hint in (("ultralytics", "ultralytics"),
                       ("supervision", "supervision"),
                       ("sports", "git+https://github.com/roboflow/sports.git")):
         try:
@@ -71,12 +63,97 @@ def check_env() -> None:
         )
 
 
+def _download(repo: str, fname: str, cache_dir: str) -> str:
+    """HuggingFace 에서 가중치를 받는다. 이미 있으면 건너뛴다."""
+    os.makedirs(cache_dir, exist_ok=True)
+    dest = os.path.join(cache_dir, fname)
+    if os.path.isfile(dest) and os.path.getsize(dest) > 1_000_000:
+        return dest
+
+    url = f"https://huggingface.co/{repo}/resolve/main/{fname}"
+    tmp = dest + ".part"
+
+    # 매 블록마다 찍으면 로그가 폭주한다. 10% 단위로만 알린다.
+    state = {"last": -1}
+
+    def hook(blocks, block_size, total):
+        if total <= 0:
+            return
+        pct = min(100, blocks * block_size * 100 // total)
+        if pct >= state["last"] + 10:
+            state["last"] = pct - (pct % 10)
+            print(f"    {state['last']:3d}%", flush=True)
+
+    print(f"  다운로드: {repo}/{fname}")
+    urllib.request.urlretrieve(url, tmp, reporthook=hook)
+    print("    완료")
+    os.replace(tmp, dest)
+    return dest
+
+
+def _verify_player(model) -> Dict[str, int]:
+    """선수 탐지 모델의 클래스를 확인하고 이름 → ID 매핑을 만든다."""
+    names = model.names
+    if isinstance(names, (list, tuple)):
+        names = dict(enumerate(names))
+    lookup = {str(v).lower(): int(k) for k, v in names.items()}
+
+    missing = [c for c in EXPECTED_CLASSES if c not in lookup]
+    if missing:
+        raise RuntimeError(
+            f"선수 탐지 모델의 클래스가 예상과 다르다. 없는 클래스: {missing} / "
+            f"모델이 가진 것: {sorted(lookup)}"
+        )
+    return {c: lookup[c] for c in EXPECTED_CLASSES}
+
+
+def _verify_field(model) -> int:
+    """경기장 모델이 32개 키포인트를 내는지 확인한다.
+
+    개수가 다르면 SoccerPitchConfiguration.vertices 와 짝이 맞지 않아
+    호모그래피가 엉뚱한 결과를 낸다.
+    """
+    shape = getattr(getattr(model, "model", None), "kpt_shape", None)
+    if shape is None:
+        raise RuntimeError("경기장 모델에 kpt_shape 가 없다. pose 모델이 아닌 것 같다.")
+    n = int(shape[0])
+    if n != EXPECTED_KEYPOINTS:
+        raise RuntimeError(
+            f"경기장 키포인트가 {n}개다. {EXPECTED_KEYPOINTS}개를 기대했다 — "
+            "SoccerPitchConfiguration.vertices 와 짝이 맞지 않는다."
+        )
+    return n
+
+
+def load(cache_dir: str = DEFAULT_CACHE, device: Optional[str] = None,
+         weights: Optional[Dict[str, Tuple[str, str]]] = None) -> Models:
+    """가중치를 받아 두 모델을 로드하고 구조를 검증한다."""
+    check_env()
+    from ultralytics import YOLO
+    import torch
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    src = weights or WEIGHTS
+    player_pt = _download(*src["player"], cache_dir=cache_dir)
+    field_pt = _download(*src["field"], cache_dir=cache_dir)
+
+    player = YOLO(player_pt).to(device)
+    fieldm = YOLO(field_pt).to(device)
+
+    cls = _verify_player(player)
+    n_kp = _verify_field(fieldm)
+
+    return Models(player=player, field=fieldm, cls=cls, n_keypoints=n_kp, device=device)
+
+
 def pitch_config(preset):
     """프리셋의 실측 규격을 반영한 SoccerPitchConfiguration.
 
     Roboflow 기본값은 120x70m(규정 최대치)라 그대로 쓰면 거리·속도가 부풀려진다.
     페널티박스 등 고정 규격은 그대로 두고 전체 길이·폭만 실측값으로 바꾼다.
-    좌표 단위는 cm이므로 사용처에서 /100 하여 미터로 쓴다.
+    좌표 단위는 cm 이므로 사용처에서 /100 하여 미터로 쓴다.
     """
     from sports.configs.soccer import SoccerPitchConfiguration
 

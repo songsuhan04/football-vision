@@ -19,6 +19,8 @@ class Preset:
     # ---- 선수 탐지 ----
     det_conf: float = 0.30
     nms_threshold: float = 0.50
+    det_imgsz: int = 1280
+    """탐지 입력 해상도. 기본 640 이면 화면 먼 쪽의 작은 선수를 놓친다."""
 
     # ---- 경기장 키포인트 ----
     kp_conf: float = 0.50

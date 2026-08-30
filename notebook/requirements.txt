@@ -1,9 +1,12 @@
 # Colab 전용. 로컬 맥에는 설치하지 않는다 (PyTorch 등 4GB+).
 # 노트북 1번 셀이 이걸 그대로 설치한다.
-inference-gpu
+#
+# Roboflow 의 `inference` 패키지는 Python <3.13 만 지원해 Colab(3.13)에서 설치 불가.
+# 가중치를 직접 받아 ultralytics 로 구동한다. Roboflow API 키도 필요 없다.
+ultralytics
 gdown
 git+https://github.com/roboflow/sports.git
-# 아래는 Colab에 이미 있지만 명시해둔다
+# 아래는 Colab 에 이미 있거나 위 패키지가 끌어온다. 명시해둔다.
 supervision
 opencv-python
 numpy

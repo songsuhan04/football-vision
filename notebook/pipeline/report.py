@@ -15,7 +15,13 @@ def verdict(summary: Dict[str, Any], preset) -> Dict[str, Any]:
     """채택 구간 수와 키포인트율로 다음 행동을 정한다."""
     n = summary["n_analyzed"]
     kp_rate = summary["keypoint_ok_rate"]
+    coverage = summary["coverage"]
+    scanned = summary["scanned_s"]
     broadcast = preset.name == "broadcast"
+
+    # 30초짜리 검증 클립에 "구간이 1개뿐"이라고 경고하면 오판이다.
+    # 짧은 영상에서는 개수가 아니라 커버리지로 판단한다.
+    short_clip = scanned < 120
 
     if broadcast and kp_rate < 0.30:
         return {
@@ -42,6 +48,19 @@ def verdict(summary: Dict[str, Any], preset) -> Dict[str, Any]:
             "level": "STOP",
             "headline": "채택 구간이 하나도 없다",
             "detail": "필터를 완화하거나(min_window_s, min_players) 다른 영상이 필요하다.",
+        }
+    if short_clip:
+        if coverage >= 0.7:
+            return {
+                "level": "GO",
+                "headline": f"짧은 클립 검증 통과 — 커버리지 {coverage:.0%}, 키포인트율 {kp_rate:.0%}",
+                "detail": ("파이프라인이 정상 동작한다.\n"
+                           "→ 이제 실제 경기 영상(길이 5분 이상)으로 채택 구간 수를 측정할 것."),
+            }
+        return {
+            "level": "WARN",
+            "headline": f"짧은 클립인데 커버리지가 {coverage:.0%}뿐",
+            "detail": "탈락 구간의 사유를 위 목록에서 확인할 것.",
         }
     if n <= 2:
         return {

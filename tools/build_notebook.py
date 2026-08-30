@@ -29,14 +29,14 @@ CELLS = [
 """),
 
 (CODE, """#@title 1. 환경 설치 (2~3분)
-!pip install -q inference-gpu gdown
+!pip install -q ultralytics gdown
 !pip install -q git+https://github.com/roboflow/sports.git
 
 # pip 이 조용히 실패하는 일이 있다. 실제로 import 되는지 여기서 확인한다.
 import importlib
 
 _missing = []
-for _m in ("inference", "supervision", "sports", "cv2", "numpy"):
+for _m in ("ultralytics", "supervision", "sports", "cv2", "numpy"):
     try:
         importlib.import_module(_m)
         print("  OK  ", _m)
@@ -110,51 +110,28 @@ print("프리셋    :", list(presets.PRESETS))
 try:
     models.check_env()
     print()
-    print("2번 셀 성공 - 4-A 로 진행할 것")
+    print("2번 셀 성공 - 3-A 로 진행할 것")
 except ImportError as e:
     print()
     print("경고:", e)'''),
 
-(MD, """## 3. Roboflow API 키
-
-모델 가중치(.pt)는 공개 배포되지 않아 Roboflow에서 받아 쓴다. **무료 계정으로 충분하다.**
-
-1. [app.roboflow.com/settings/api](https://app.roboflow.com/settings/api) 에서 Private API Key 복사
-2. Colab 좌측 **🔑 Secrets** → `ROBOFLOW_API_KEY` 로 저장 → 노트북 접근 허용 토글 켜기
-
-Secrets에 없으면 아래 셀이 직접 입력을 받는다 (입력값은 화면에 표시되지 않음)."""),
-
-(CODE, '''#@title 3. API 키
-ROBOFLOW_API_KEY = ""
-try:
-    from google.colab import userdata
-    ROBOFLOW_API_KEY = userdata.get("ROBOFLOW_API_KEY") or ""
-except Exception:
-    pass
-
-if not ROBOFLOW_API_KEY:
-    import getpass
-    ROBOFLOW_API_KEY = getpass.getpass("Roboflow API Key: ").strip()
-
-print("API 키 준비됨" if ROBOFLOW_API_KEY else "⚠️ 키가 비어 있다")'''),
-
-(MD, """## 4. 영상 준비
+(MD, """## 3. 영상 준비
 
 **두 경로 중 하나를 고른다.**
 
-### 4-A. 공개 샘플 클립 — *먼저 이걸로 돌릴 것*
+### 3-A. 공개 샘플 클립 — *먼저 이걸로 돌릴 것*
 
 DFL Bundesliga 중계 클립(Kaggle 공개 데이터). 저작권 걱정이 없고, 모델이 검증된 영상이다.
 
 **여기서 실패하면 영상 문제가 아니라 코드 문제다.** 이 분리가 디버깅 시간을 크게 줄인다.
 
-### 4-B. 내 영상
+### 3-B. 내 영상
 
-`4-B` 셀에서 업로드하거나 Google Drive를 마운트한다. 유튜브 URL도 받는다.
+`3-B` 셀에서 업로드하거나 Google Drive를 마운트한다. 유튜브 URL도 받는다.
 
 > ⚠️ 90분 풀경기는 스캔에만 오래 걸린다. 처음에는 `MAX_SECONDS` 로 5~10분만 잘라 확인할 것."""),
 
-(CODE, '''#@title 4-A. 공개 샘플 클립 (Phase 0-A)
+(CODE, '''#@title 3-A. 공개 샘플 클립 (Phase 0-A)
 !gdown -q -O "sample_broadcast.mp4" "https://drive.google.com/uc?id=1vVwjW1dE1drIdd4ZSILfbCGPD4weoNiu"
 
 VIDEO_PATH = "sample_broadcast.mp4"
@@ -167,7 +144,7 @@ _info = sv.VideoInfo.from_video_path(VIDEO_PATH)
 print(f"{VIDEO_PATH}  {_info.width}x{_info.height}  {_info.fps}fps  "
       f"{_info.total_frames/_info.fps:.0f}초")'''),
 
-(CODE, '''#@title 4-B. 내 영상 (4-A 대신 실행)
+(CODE, '''#@title 3-B. 내 영상 (3-A 대신 실행)
 # --- 아래 셋 중 하나만 주석 해제 ---
 
 ## (1) 브라우저 업로드
@@ -196,14 +173,17 @@ print(f"{VIDEO_PATH}  {_info.width}x{_info.height}  {_info.fps}fps  "
 # MAX_SECONDS = 600.0    # 처음엔 10분만 훑어볼 것
 pass'''),
 
-(CODE, '''#@title 5. 모델 로드 (최초 1회 가중치 다운로드)
-MODELS = models.load(ROBOFLOW_API_KEY)
-print("선수 탐지 :", models.PLAYER_MODEL_ID)
-print("경기장    :", models.FIELD_MODEL_ID)
+(CODE, '''#@title 4. 모델 로드 (최초 1회 가중치 ~180MB 다운로드)
+MODELS = models.load()          # weights/ 에 캐시된다. 두 번째부터는 즉시 로드
+
+print()
+print("device    :", MODELS.device)
+print("클래스    :", MODELS.cls)
+print("키포인트  :", MODELS.n_keypoints, "개")
 print("프리셋    :", PRESET.name,
       f"| 경기장 {PRESET.pitch_length_cm/100:.0f}x{PRESET.pitch_width_cm/100:.0f}m")'''),
 
-(MD, """## 6. 눈으로 먼저 확인
+(MD, """## 5. 눈으로 먼저 확인
 
 숫자를 보기 전에 프레임 하나를 눈으로 본다. 여기서 이상하면 스캔을 돌릴 이유가 없다.
 
@@ -212,30 +192,33 @@ print("프리셋    :", PRESET.name,
 
 **판정 기준**: 2D 점들이 경기장 안에 있고, 실제 선수 배치와 비슷한 모양인가?"""),
 
-(CODE, '''#@title 6. 단일 프레임 시각 확인
+(CODE, '''#@title 5. 단일 프레임 시각 확인
 import numpy as np, supervision as sv, matplotlib.pyplot as plt
 from sports.annotators.soccer import draw_pitch, draw_points_on_pitch
 
-PROBE_T = 10.0   #@param {type:"number"}  확인할 시각 [초]
+PROBE_T = 10.0   #@param {type:"number"}
 
 _info = sv.VideoInfo.from_video_path(VIDEO_PATH)
 frame = next(sv.get_video_frames_generator(
     VIDEO_PATH, start=int(PROBE_T * _info.fps)))
 
-# --- 탐지 ---
-det = sv.Detections.from_inference(
-    MODELS.player.infer(frame, confidence=PRESET.det_conf)[0])
-det = det[det.class_id != models.BALL_ID]
+# --- 선수 탐지 ---
+det = sv.Detections.from_ultralytics(
+    MODELS.player(frame, conf=PRESET.det_conf,
+                  imgsz=PRESET.det_imgsz, verbose=False)[0])
+det = det[det.class_id != MODELS.id_of("ball")]
 det = det.with_nms(threshold=PRESET.nms_threshold, class_agnostic=True)
 
-kp_res = MODELS.field.infer(frame, confidence=PRESET.det_conf)[0]
-kp = sv.KeyPoints.from_inference(kp_res)
+# --- 경기장 키포인트 ---
+kp = sv.KeyPoints.from_ultralytics(
+    MODELS.field(frame, conf=PRESET.det_conf, verbose=False)[0])
 
-# --- 오버레이 ---
+# --- 원본 오버레이 ---
 left = frame.copy()
 left = sv.EllipseAnnotator(color=sv.ColorPalette.from_hex(
     ["#00BFFF", "#FF1493", "#FFD700"]), thickness=2).annotate(left, det)
-mask = kp.confidence[0] > PRESET.kp_conf
+kp_conf = geometry.kp_confidence(kp)
+mask = kp_conf[0] > PRESET.kp_conf
 left = sv.VertexAnnotator(color=sv.Color.from_hex("#00FF88"), radius=8).annotate(
     left, sv.KeyPoints(xy=kp.xy[0][mask][np.newaxis, ...]))
 
@@ -243,50 +226,53 @@ left = sv.VertexAnnotator(color=sv.Color.from_hex("#00FF88"), radius=8).annotate
 config = models.pitch_config(PRESET)
 vertices_cm = np.array(config.vertices, dtype=np.float32)
 H, n_kp, n_in = geometry.solve_homography(
-    kp.xy[0], kp.confidence[0], vertices_cm, PRESET.kp_conf, PRESET.min_keypoints)
+    kp.xy[0], kp_conf[0], vertices_cm, PRESET.kp_conf, PRESET.min_keypoints)
 
 print(f"키포인트 통과 {n_kp}개 · RANSAC 인라이어 {n_in}개 · 선수 {len(det)}명")
 
 fig, ax = plt.subplots(1, 2, figsize=(17, 5))
-ax[0].imshow(left[..., ::-1]); ax[0].axis("off"); ax[0].set_title("detections + pitch keypoints")
+ax[0].imshow(left[..., ::-1]); ax[0].axis("off")
+ax[0].set_title("detections + pitch keypoints")
 
-if H is None or not geometry.is_sane(H, geometry.probe_points(_info.width, _info.height)):
-    ax[1].text(0.5, 0.5, "homography FAILED\\n(keypoints insufficient or degenerate)",
-               ha="center", va="center", color="#e74c3c", fontsize=13)
+probes = geometry.probe_points(_info.width, _info.height)
+if H is None or not geometry.is_sane(H, probes):
+    ax[1].text(0.5, 0.5, "homography FAILED", ha="center", va="center",
+               color="#e74c3c", fontsize=14)
     ax[1].axis("off")
 else:
     xy_px = det.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
     xy_m = geometry.to_pitch_m(H, xy_px)
     radar = draw_pitch(config=config)
-    radar = draw_points_on_pitch(config=config, xy=xy_m * 100,   # draw_* 는 cm 단위
+    radar = draw_points_on_pitch(config=config, xy=xy_m * 100,   # draw_* 는 cm
                                  face_color=sv.Color.from_hex("#00BFFF"),
                                  edge_color=sv.Color.BLACK, radius=16, pitch=radar)
     ax[1].imshow(radar[..., ::-1]); ax[1].axis("off"); ax[1].set_title("2D top-down")
-    inside = ((xy_m[:, 0] >= 0) & (xy_m[:, 0] <= PRESET.pitch_length_cm / 100) &
-              (xy_m[:, 1] >= 0) & (xy_m[:, 1] <= PRESET.pitch_width_cm / 100))
+    L, W = PRESET.pitch_length_cm / 100, PRESET.pitch_width_cm / 100
+    inside = ((xy_m[:, 0] >= 0) & (xy_m[:, 0] <= L) &
+              (xy_m[:, 1] >= 0) & (xy_m[:, 1] <= W))
     print(f"경기장 안으로 매핑된 선수: {inside.sum()}/{len(xy_m)}명")
 plt.tight_layout(); plt.show()'''),
 
-(MD, """## 7. 사전 스캔
+(MD, """## 6. 사전 스캔
 
 영상 전체를 2fps로 훑는다. 90분 영상이면 약 10,800프레임 × 모델 2개.
 T4 기준 대략 **10분 영상당 1~2분** 정도 걸린다."""),
 
-(CODE, '''#@title 7. 스캔 실행
+(CODE, '''#@title 6. 스캔 실행
 SCAN = scan.scan(VIDEO_PATH, MODELS, PRESET,
                  start_s=START_S, max_seconds=MAX_SECONDS)
 print(f"\\n스캔 완료: {len(SCAN['rows'])}프레임")'''),
 
-(CODE, '''#@title 8. 판정
+(CODE, '''#@title 7. 판정
 WIN = windows.find_windows(SCAN, PRESET)
 report.print_summary(SCAN, WIN, PRESET)'''),
 
-(CODE, '''#@title 9. 시간축 프로파일
+(CODE, '''#@title 8. 시간축 프로파일
 import matplotlib.pyplot as plt
 fig = report.plot_profile(SCAN, WIN, PRESET)
 plt.show()'''),
 
-(CODE, '''#@title 10. 결과 저장 + 다운로드
+(CODE, '''#@title 9. 결과 저장 + 다운로드
 import json, os
 
 out = {"scan": SCAN, "windows": WIN}
@@ -313,7 +299,7 @@ except Exception:
 | **🛑 STOP** (중계인데 키포인트율 낮음) | 4-A 샘플 클립으로 돌아가 코드 검증 |
 | **🛑 STOP** (화각 부족) | (a) 넓은 구간만 채택 (b) 키포인트 모델 파인튜닝 (c) 재촬영 — 결정 필요 |
 
-**필터만 바꿔 재판정하려면** 7번(스캔)을 다시 돌릴 필요 없이 8번부터 실행하면 된다:
+**필터만 바꿔 재판정하려면** 6번(스캔)을 다시 돌릴 필요 없이 7번부터 실행하면 된다:
 
 ```python
 PRESET = PRESET.with_(min_window_s=6.0, min_players=5)
